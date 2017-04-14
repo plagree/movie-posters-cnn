@@ -8,11 +8,14 @@ from keras.applications.imagenet_utils import preprocess_input
 import os, sys
 from random import shuffle
 import pickle
+import argparse
 from keras import applications
 from operator import mul
 from tensorflow import gfile
 from tensorflow import logging
 from PIL import Image
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 
 def load_img2(img, target_size=None):
@@ -33,78 +36,62 @@ def pred_vector(input_img):
     yb = y.reshape(reduce(mul, y.shape, 1))
     return yb
 
-#A = np.zeros((40000, 25088), dtype=np.float32)
-#with gfile.Open('gs://play-dataset/data.pkl', 'w') as fout:
-#    for i in xrange(A.shape[0]):
-#       fout.write(','.join(map(str,A[i,:]))+'\n')
-#sys.exit(1)
-
-
 def feature_embedding():
-# Build the VGG16 network
-model = applications.VGG16(weights='imagenet', include_top=False)
-#file_weights = 'gs://play-dataset/dataset/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5'
-#model.load_weights(file_weights) # 'dataset/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5')
-
-# N number of movies
-N = 0
-
-years_pattern = 'gs://play-dataset/dataset/pictures/'
-years = gfile.ListDirectory(years_pattern)
-
-with gfile.Open('gs://play-dataset/number_movies.csv', 'w') as fout:
-    for year in years:
-        N = 0
+    # Build the VGG16 network
+    model = applications.VGG16(weights='imagenet', include_top=False)
+    #file_weights = 'gs://play-dataset/dataset/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5'
+    #model.load_weights(file_weights) # 'dataset/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5')
+    
+    # N number of movies
+    N = 0
+    
+    years_pattern = 'gs://play-dataset/dataset/pictures/'
+    years = gfile.ListDirectory(years_pattern)
+    
+    with gfile.Open('gs://play-dataset/number_movies.csv', 'w') as fout:
+        for year in years:
+            N = 0
+            files = gfile.Glob(years_pattern + year + '*.jpg')
+            for f in files:
+                N += 1
+            fout.write('%d,%s' % (N, year))
+            # break
+    # print N
+    sys.exit(1)
+    
+    logging.info("There is a total of %d movies." % N)
+    i = 0
+    # 25088 is the dimension of the feature space of the ConvNet
+    A = np.zeros((N, 25088), dtype=np.float32)
+    logging.info('Starting Predictions.')
+    for year in sorted(years):
         files = gfile.Glob(years_pattern + year + '*.jpg')
-        for f in files:
-            N += 1
-        fout.write('%d,%s' % (N, year))
-        # break
-# print N
-sys.exit(1)
-
-logging.info("There is a total of %d movies." % N)
-i = 0
-# 25088 is the dimension of the feature space of the ConvNet
-A = np.zeros((N, 25088), dtype=np.float32)
-logging.info('Starting Predictions.')
-for year in sorted(years):
-    files = gfile.Glob(years_pattern + year + '*.jpg')
-    for movie in sorted(files):
-        img_path = 'dataset/pictures/%s/%s' % (year, movie)
-        with gfile.Open(f) as fin:
-            img = Image.open(fin)
-            y = pred_vector(img)
-            A[i, :] += y
-            i += 1
-    logging.info("Number of training: %d.", i)
-    break
+        for movie in sorted(files):
+            img_path = 'dataset/pictures/%s/%s' % (year, movie)
+            with gfile.Open(f) as fin:
+                img = Image.open(fin)
+                y = pred_vector(img)
+                A[i, :] += y
+                i += 1
+        logging.info("Number of training: %d.", i)
+        break
 
 # with gfile.Open('gs://play-dataset/data.pkl', 'w') as fout:
 #     pickle.dump(A[:1000,:], fout)
 
-# 2. PCA because T-SNE requires small dimension
-from sklearn.decomposition import PCA
-pca = PCA(n_components=250, svd_solver='randomized')
-pca.fit(A)
-A = pca.transform(A)
+def pca_reduction(A):
+    # 2. PCA because T-SNE requires small dimension
+    pca = PCA(n_components=250, svd_solver='randomized')
+    pca.fit(A)
+    A = pca.transform(A)
+    logging.info("PCA done.")
+    return A
 
-logging.info("PCA done.")
+def tsne(A):
+    tsne = TSNE()
+    y = tsne.fit_transform(Y)
+    return y
 
-with gfile.Open('gs://play-dataset/data.pkl', 'w') as fout:
-    pickle.dump(A, fout)
-
-sys.exit(1)
-
-# 3. TSNE for visualization
-from sklearn.manifold import TSNE
-tsne = TSNE()
-y2 = tsne.fit_transform(Y)
-
-print y2.shape
-
-with open('final_data.pkl', 'wb') as fout:
-    pickle.dump(y2, fout, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -123,5 +110,28 @@ if __name__ == '__main__':
     args = parser.parse_args()
     arguments = args.__dict__
     job_dir = arguments.pop('job_dir')
-    
-    train_model(**arguments)
+
+    # 1. Feature embedding
+    feature_embedding()
+
+    # 2. PCA reduction
+    X = pca_reduction(X)
+
+    with gfile.Open('gs://play-dataset/data.pkl', 'wb') as fout:
+        pickle.dump(X, fout)
+
+    sys.exit(1)
+
+    # 3. T-SNE reduction in 2D for visualization
+    y = tsne(X)
+
+    with gfile.Open('gs://play-dataset/final_data.pkl', 'wb') as fout:
+        pickle.dump(y, fout)
+
+#A = np.zeros((40000, 25088), dtype=np.float32)
+#with gfile.Open('gs://play-dataset/data.pkl', 'w') as fout:
+#    for i in xrange(A.shape[0]):
+#       fout.write(','.join(map(str,A[i,:]))+'\n')
+#sys.exit(1)
+
+
