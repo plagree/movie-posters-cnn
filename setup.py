@@ -4,7 +4,7 @@
 # setup.py
 from setuptools import setup, find_packages
 
-setup(name='movies',
+setup(name='trainer',
       version='0.1',
       packages=find_packages(),
       description='analysis of movie posters using Keras for fun',
